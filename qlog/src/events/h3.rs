@@ -43,6 +43,7 @@ pub enum H3StreamType {
     Control,
     Push,
     Reserved,
+    WebTransport,
     Unknown,
     QpackEncode,
     QpackDecode,
@@ -188,6 +189,7 @@ pub struct H3ParametersSet {
     pub blocked_streams_count: Option<u64>,
     pub enable_connect_protocol: Option<u64>,
     pub h3_datagram: Option<u64>,
+    pub webtransport_max_sessions: Option<u64>,
 
     // qlog-defined
     pub waits_for_settings: Option<bool>,
@@ -202,6 +204,7 @@ pub struct H3ParametersRestored {
     pub blocked_streams_count: Option<u64>,
     pub enable_connect_protocol: Option<u64>,
     pub h3_datagram: Option<u64>,
+    pub webtransport_max_sessions: Option<u64>,
 }
 
 #[serde_with::skip_serializing_none]

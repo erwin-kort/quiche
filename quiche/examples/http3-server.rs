@@ -363,6 +363,14 @@ fn main() {
                             );
                         },
 
+                        Ok((stream_id, quiche::h3::Event::WebTransportStreamData(session_id))) => {
+                            info!(
+                                "{} got data on stream id {}",
+                                client.conn.trace_id(),
+                                stream_id
+                            );
+                        },
+
                         Ok((_stream_id, quiche::h3::Event::Finished)) => (),
 
                         Ok((_stream_id, quiche::h3::Event::Reset { .. })) => (),

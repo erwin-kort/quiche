@@ -38,13 +38,17 @@ pub const GOAWAY_FRAME_TYPE_ID: u64 = 0x7;
 pub const MAX_PUSH_FRAME_TYPE_ID: u64 = 0xD;
 pub const PRIORITY_UPDATE_FRAME_REQUEST_TYPE_ID: u64 = 0xF0700;
 pub const PRIORITY_UPDATE_FRAME_PUSH_TYPE_ID: u64 = 0xF0701;
+pub const WEBTRANSPORT_STREAM_FRAME_TYPE_ID: u64 = 0x41;
 
 pub const SETTINGS_QPACK_MAX_TABLE_CAPACITY: u64 = 0x1;
 pub const SETTINGS_MAX_FIELD_SECTION_SIZE: u64 = 0x6;
 pub const SETTINGS_QPACK_BLOCKED_STREAMS: u64 = 0x7;
 pub const SETTINGS_ENABLE_CONNECT_PROTOCOL: u64 = 0x8;
-pub const SETTINGS_H3_DATAGRAM_00: u64 = 0x276;
+pub const SETTINGS_H3_DATAGRAM_04: u64 = 0x277;
+pub const SETTINGS_H3_DATAGRAM_08: u64 = 0xffd277;
 pub const SETTINGS_H3_DATAGRAM: u64 = 0x33;
+pub const SETTINGS_ENABLE_WEBTRANSPORT_02: u64 = 0x2b603742;
+pub const SETTINGS_WEBTRANSPORT_MAX_SESSIONS: u64 = 0xc671706a;
 
 // Permit between 16 maximally-encoded and 128 minimally-encoded SETTINGS.
 const MAX_SETTINGS_PAYLOAD_SIZE: usize = 256;
@@ -69,6 +73,7 @@ pub enum Frame {
         qpack_blocked_streams: Option<u64>,
         connect_protocol_enabled: Option<u64>,
         h3_datagram: Option<u64>,
+        webtransport_max_sessions: Option<u64>,
         grease: Option<(u64, u64)>,
         raw: Option<Vec<(u64, u64)>>,
     },
@@ -180,6 +185,7 @@ impl Frame {
                 qpack_blocked_streams,
                 connect_protocol_enabled,
                 h3_datagram,
+                webtransport_max_sessions,
                 grease,
                 ..
             } => {
@@ -206,9 +212,18 @@ impl Frame {
                 }
 
                 if let Some(val) = h3_datagram {
-                    len += octets::varint_len(SETTINGS_H3_DATAGRAM_00);
+                    len += octets::varint_len(SETTINGS_H3_DATAGRAM_04);
+                    len += octets::varint_len(*val);
+                    len += octets::varint_len(SETTINGS_H3_DATAGRAM_08);
                     len += octets::varint_len(*val);
                     len += octets::varint_len(SETTINGS_H3_DATAGRAM);
+                    len += octets::varint_len(*val);
+                }
+
+                if let Some(val) = webtransport_max_sessions {
+                    len += octets::varint_len(SETTINGS_ENABLE_WEBTRANSPORT_02);
+                    len += octets::varint_len(if *val > 0 { 1 } else { 0 });
+                    len += octets::varint_len(SETTINGS_WEBTRANSPORT_MAX_SESSIONS);
                     len += octets::varint_len(*val);
                 }
 
@@ -241,9 +256,18 @@ impl Frame {
                 }
 
                 if let Some(val) = h3_datagram {
-                    b.put_varint(SETTINGS_H3_DATAGRAM_00)?;
+                    b.put_varint(SETTINGS_H3_DATAGRAM_04)?;
+                    b.put_varint(*val)?;
+                    b.put_varint(SETTINGS_H3_DATAGRAM_08)?;
                     b.put_varint(*val)?;
                     b.put_varint(SETTINGS_H3_DATAGRAM)?;
+                    b.put_varint(*val)?;
+                }
+
+                if let Some(val) = webtransport_max_sessions {
+                    b.put_varint(SETTINGS_ENABLE_WEBTRANSPORT_02)?;
+                    b.put_varint(if *val > 0 { 1 } else { 0 })?;
+                    b.put_varint(SETTINGS_WEBTRANSPORT_MAX_SESSIONS)?;
                     b.put_varint(*val)?;
                 }
 
@@ -334,6 +358,7 @@ impl Frame {
                 qpack_blocked_streams,
                 connect_protocol_enabled,
                 h3_datagram,
+                webtransport_max_sessions,
                 grease,
                 ..
             } => {
@@ -341,21 +366,21 @@ impl Frame {
 
                 if let Some(v) = max_field_section_size {
                     settings.push(qlog::events::h3::Setting {
-                        name: "MAX_FIELD_SECTION_SIZE".to_string(),
+                        name: "SETTINGS_MAX_FIELD_SECTION_SIZE".to_string(),
                         value: *v,
                     });
                 }
 
                 if let Some(v) = qpack_max_table_capacity {
                     settings.push(qlog::events::h3::Setting {
-                        name: "QPACK_MAX_TABLE_CAPACITY".to_string(),
+                        name: "SETTINGS_QPACK_MAX_TABLE_CAPACITY".to_string(),
                         value: *v,
                     });
                 }
 
                 if let Some(v) = qpack_blocked_streams {
                     settings.push(qlog::events::h3::Setting {
-                        name: "QPACK_BLOCKED_STREAMS".to_string(),
+                        name: "SETTINGS_QPACK_BLOCKED_STREAMS".to_string(),
                         value: *v,
                     });
                 }
@@ -369,7 +394,14 @@ impl Frame {
 
                 if let Some(v) = h3_datagram {
                     settings.push(qlog::events::h3::Setting {
-                        name: "H3_DATAGRAM".to_string(),
+                        name: "SETTINGS_H3_DATAGRAM".to_string(),
+                        value: *v,
+                    });
+                }
+
+                if let Some(v) = webtransport_max_sessions {
+                    settings.push(qlog::events::h3::Setting {
+                        name: "SETTINGS_WEBTRANSPORT_MAX_SESSIONS".to_string(),
                         value: *v,
                     });
                 }
@@ -457,10 +489,21 @@ impl std::fmt::Debug for Frame {
                 max_field_section_size,
                 qpack_max_table_capacity,
                 qpack_blocked_streams,
+                connect_protocol_enabled,
+                h3_datagram,
+                webtransport_max_sessions,
+                grease,
                 raw,
                 ..
             } => {
-                write!(f, "SETTINGS max_field_section={max_field_section_size:?}, qpack_max_table={qpack_max_table_capacity:?}, qpack_blocked={qpack_blocked_streams:?} raw={raw:?}")?;
+                write!(f, "SETTINGS 
+                    max_field_section={max_field_section_size:?}, qpack_max_table={qpack_max_table_capacity:?}, qpack_blocked={qpack_blocked_streams:?}
+                    connect_protocol_enabled={connect_protocol_enabled:?}
+                    h3_datagram={h3_datagram:?}
+                    webtransport_max_sessions={webtransport_max_sessions:?}
+                    grease={grease:?}
+                    raw={raw:?}
+                ")?;
             },
 
             Frame::PushPromise {
@@ -524,6 +567,7 @@ fn parse_settings_frame(
     let mut qpack_blocked_streams = None;
     let mut connect_protocol_enabled = None;
     let mut h3_datagram = None;
+    let mut webtransport_max_sessions = None;
     let mut raw = Vec::new();
 
     // Reject SETTINGS frames that are too long.
@@ -560,13 +604,17 @@ fn parse_settings_frame(
                 connect_protocol_enabled = Some(value);
             },
 
-            SETTINGS_H3_DATAGRAM_00 | SETTINGS_H3_DATAGRAM => {
+            SETTINGS_H3_DATAGRAM | SETTINGS_H3_DATAGRAM_04 | SETTINGS_H3_DATAGRAM_08 => {
                 if value > 1 {
                     return Err(super::Error::SettingsError);
                 }
 
                 h3_datagram = Some(value);
             },
+
+            SETTINGS_ENABLE_WEBTRANSPORT_02 | SETTINGS_WEBTRANSPORT_MAX_SESSIONS => {
+                webtransport_max_sessions = Some(value);
+            }
 
             // Reserved values overlap with HTTP/2 and MUST be rejected
             0x0 | 0x2 | 0x3 | 0x4 | 0x5 =>
@@ -577,12 +625,17 @@ fn parse_settings_frame(
         }
     }
 
+    if h3_datagram.is_none() && webtransport_max_sessions.is_some() {
+        return Err(super::Error::SettingsError);
+    }
+
     Ok(Frame::Settings {
         max_field_section_size,
         qpack_max_table_capacity,
         qpack_blocked_streams,
         connect_protocol_enabled,
         h3_datagram,
+        webtransport_max_sessions,
         grease: None,
         raw: Some(raw),
     })
@@ -722,8 +775,8 @@ mod tests {
             (SETTINGS_QPACK_MAX_TABLE_CAPACITY, 0),
             (SETTINGS_QPACK_BLOCKED_STREAMS, 0),
             (SETTINGS_ENABLE_CONNECT_PROTOCOL, 0),
-            (SETTINGS_H3_DATAGRAM_00, 0),
             (SETTINGS_H3_DATAGRAM, 0),
+            (SETTINGS_WEBTRANSPORT_MAX_SESSIONS, 0),
         ];
 
         let frame = Frame::Settings {
@@ -732,6 +785,7 @@ mod tests {
             qpack_blocked_streams: Some(0),
             connect_protocol_enabled: Some(0),
             h3_datagram: Some(0),
+            webtransport_max_sessions: Some(0),
             grease: None,
             raw: Some(raw_settings),
         };
@@ -767,6 +821,7 @@ mod tests {
             qpack_blocked_streams: Some(0),
             connect_protocol_enabled: Some(0),
             h3_datagram: Some(0),
+            webtransport_max_sessions: Some(0),
             grease: Some((33, 33)),
             raw: Default::default(),
         };
@@ -776,8 +831,8 @@ mod tests {
             (SETTINGS_QPACK_MAX_TABLE_CAPACITY, 0),
             (SETTINGS_QPACK_BLOCKED_STREAMS, 0),
             (SETTINGS_ENABLE_CONNECT_PROTOCOL, 0),
-            (SETTINGS_H3_DATAGRAM_00, 0),
             (SETTINGS_H3_DATAGRAM, 0),
+            (SETTINGS_WEBTRANSPORT_MAX_SESSIONS, 0),
             (33, 33),
         ];
 
@@ -789,6 +844,7 @@ mod tests {
             qpack_blocked_streams: Some(0),
             connect_protocol_enabled: Some(0),
             h3_datagram: Some(0),
+            webtransport_max_sessions: Some(0),
             grease: None,
             raw: Some(raw_settings),
         };
@@ -826,6 +882,7 @@ mod tests {
             qpack_blocked_streams: None,
             connect_protocol_enabled: None,
             h3_datagram: None,
+            webtransport_max_sessions: None,
             grease: None,
             raw: Some(raw_settings),
         };
@@ -863,6 +920,7 @@ mod tests {
             qpack_blocked_streams: None,
             connect_protocol_enabled: Some(1),
             h3_datagram: None,
+            webtransport_max_sessions: None,
             grease: None,
             raw: Some(raw_settings),
         };
@@ -900,6 +958,7 @@ mod tests {
             qpack_blocked_streams: None,
             connect_protocol_enabled: Some(9),
             h3_datagram: None,
+            webtransport_max_sessions: None,
             grease: None,
             raw: Some(raw_settings),
         };
@@ -929,7 +988,7 @@ mod tests {
         let mut d = [42; 128];
 
         let raw_settings =
-            vec![(SETTINGS_H3_DATAGRAM_00, 1), (SETTINGS_H3_DATAGRAM, 1)];
+            vec![(SETTINGS_H3_DATAGRAM, 1)];
 
         let frame = Frame::Settings {
             max_field_section_size: None,
@@ -937,6 +996,7 @@ mod tests {
             qpack_blocked_streams: None,
             connect_protocol_enabled: None,
             h3_datagram: Some(1),
+            webtransport_max_sessions: None,
             grease: None,
             raw: Some(raw_settings),
         };
@@ -972,6 +1032,7 @@ mod tests {
             qpack_blocked_streams: None,
             connect_protocol_enabled: None,
             h3_datagram: Some(5),
+            webtransport_max_sessions: None,
             grease: None,
             raw: Default::default(),
         };
@@ -1011,6 +1072,7 @@ mod tests {
             qpack_blocked_streams: Some(0),
             connect_protocol_enabled: None,
             h3_datagram: None,
+            webtransport_max_sessions: None,
             grease: None,
             raw: Some(raw_settings),
         };

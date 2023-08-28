@@ -511,6 +511,7 @@ pub struct Config {
     qpack_max_table_capacity: Option<u64>,
     qpack_blocked_streams: Option<u64>,
     connect_protocol_enabled: Option<u64>,
+    webtransport_max_sessions: Option<u64>,
 }
 
 impl Config {
@@ -521,6 +522,7 @@ impl Config {
             qpack_max_table_capacity: None,
             qpack_blocked_streams: None,
             connect_protocol_enabled: None,
+            webtransport_max_sessions: None,
         })
     }
 
@@ -559,6 +561,17 @@ impl Config {
             self.connect_protocol_enabled = Some(1);
         } else {
             self.connect_protocol_enabled = None;
+        }
+    }
+
+    /// Sets the `SETTINGS_WEBTRANSPORT_MAX_SESSIONS` setting.
+    /// 
+    /// The default value is `0`.
+    pub fn set_webtransport_max_sessions(&mut self, v: u64) {
+        if v > 0 {
+            self.webtransport_max_sessions = Some(v);
+        } else {
+            self.webtransport_max_sessions = None;
         }
     }
 }
@@ -673,6 +686,19 @@ pub enum Event {
     /// [`Done`]: enum.Error.html#variant.Done
     Data,
 
+    /// WebTransport Data was received
+    ///
+    /// This indicates that the application can use the [`recv_webtransport_stream_data()`] method
+    /// to retrieve the data from the stream.
+    ///
+    /// Note that [`recv_webtransport_stream_data()`] will need to be called repeatedly until the
+    /// [`Done`] value is returned, as the event will not be re-armed until all
+    /// buffered data is read.
+    ///
+    /// [`recv_webtransport_stream_data()`]: struct.Connection.html#method.recv_body
+    /// [`Done`]: enum.Error.html#variant.Done
+    WebTransportStreamData(u64),
+    
     /// Stream was closed,
     Finished,
 
@@ -804,6 +830,7 @@ struct ConnectionSettings {
     pub qpack_blocked_streams: Option<u64>,
     pub connect_protocol_enabled: Option<u64>,
     pub h3_datagram: Option<u64>,
+    pub webtransport_max_sessions: Option<u64>,
     pub raw: Option<Vec<(u64, u64)>>,
 }
 
@@ -848,12 +875,13 @@ impl Connection {
         config: &Config, is_server: bool, enable_dgram: bool,
     ) -> Result<Connection> {
         let initial_uni_stream_id = if is_server { 0x3 } else { 0x2 };
+        let initial_bidi_stream_id = if is_server { 0x1 } else { 0x0 };
         let h3_datagram = if enable_dgram { Some(1) } else { None };
 
         Ok(Connection {
             is_server,
 
-            next_request_stream_id: 0,
+            next_request_stream_id: initial_bidi_stream_id,
 
             next_uni_stream_id: initial_uni_stream_id,
 
@@ -865,6 +893,7 @@ impl Connection {
                 qpack_blocked_streams: config.qpack_blocked_streams,
                 connect_protocol_enabled: config.connect_protocol_enabled,
                 h3_datagram,
+                webtransport_max_sessions: config.webtransport_max_sessions,
                 raw: Default::default(),
             },
 
@@ -874,6 +903,7 @@ impl Connection {
                 qpack_blocked_streams: None,
                 h3_datagram: None,
                 connect_protocol_enabled: None,
+                webtransport_max_sessions: None,
                 raw: Default::default(),
             },
 
@@ -1315,6 +1345,10 @@ impl Connection {
     /// [`poll()`]: struct.Connection.html#method.poll
     pub fn extended_connect_enabled_by_peer(&self) -> bool {
         self.peer_settings.connect_protocol_enabled == Some(1)
+    }
+
+    pub fn webtransport_max_sessions_by_peer(&self) -> Option<u64> {
+        self.peer_settings.webtransport_max_sessions
     }
 
     /// Reads request or response body data into the provided buffer.
@@ -1960,6 +1994,7 @@ impl Connection {
                 .local_settings
                 .connect_protocol_enabled,
             h3_datagram: self.local_settings.h3_datagram,
+            webtransport_max_sessions: self.local_settings.webtransport_max_sessions,
             grease,
             raw: Default::default(),
         };
@@ -2141,6 +2176,8 @@ impl Connection {
                                 Some(stream_id);
                         },
 
+                        stream::Type::WebTransport => {},
+
                         stream::Type::Unknown => {
                             // Unknown stream types are ignored.
                             // TODO: we MAY send STOP_SENDING
@@ -2316,6 +2353,37 @@ impl Connection {
                     break;
                 },
 
+                stream::State::WebTransportSessionId => {
+                    stream.try_fill_buffer(conn)?;
+
+                    let varint = match stream.try_consume_varint() {
+                        Ok(v) => v,
+
+                        Err(_) => continue,
+                    };
+
+                    if let Err(e) = stream.set_webtransport_session_id(varint) {
+                        conn.close(true, e.to_wire(), b"")?;
+                        return Err(e);
+                    }
+                },
+
+                stream::State::WebTransportStreamData => {
+                    // Do not emit events when not polling.
+                    if !polling {
+                        break;
+                    }
+
+                    if !stream.try_trigger_webtransport_data_event() {
+                        break;
+                    }
+
+                    if let Some(session_id) = stream.webtransport_session_id() {
+                        return Ok((stream_id, Event::WebTransportStreamData(session_id)));
+                    }
+
+                },
+
                 stream::State::Finished => break,
             }
         }
@@ -2379,6 +2447,7 @@ impl Connection {
                 qpack_blocked_streams,
                 connect_protocol_enabled,
                 h3_datagram,
+                webtransport_max_sessions,
                 raw,
                 ..
             } => {
@@ -2388,6 +2457,7 @@ impl Connection {
                     qpack_blocked_streams,
                     connect_protocol_enabled,
                     h3_datagram,
+                    webtransport_max_sessions,
                     raw,
                 };
 
@@ -5388,6 +5458,7 @@ mod tests {
             qpack_blocked_streams: None,
             connect_protocol_enabled: None,
             h3_datagram: Some(1),
+            webtransport_max_sessions: None,
             grease: None,
             raw: Default::default(),
         };

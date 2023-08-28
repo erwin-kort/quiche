@@ -1274,6 +1274,8 @@ impl HttpConn for Http3Conn {
                     }
                 },
 
+                Ok((_stream_id, quiche::h3::Event::WebTransportStreamData(_session_id))) => {},
+
                 Ok((_stream_id, quiche::h3::Event::Finished)) => {
                     self.reqs_complete += 1;
                     let reqs_count = self.reqs.len();
@@ -1512,6 +1514,8 @@ impl HttpConn for Http3Conn {
                         stream_id
                     );
                 },
+
+                Ok((_stream_id, quiche::h3::Event::WebTransportStreamData(_session_id))) => {},
 
                 Ok((_stream_id, quiche::h3::Event::Finished)) => (),
 
