@@ -565,7 +565,7 @@ impl Config {
     }
 
     /// Sets the `SETTINGS_WEBTRANSPORT_MAX_SESSIONS` setting.
-    /// 
+    ///
     /// The default value is `0`.
     pub fn set_webtransport_max_sessions(&mut self, v: u64) {
         if v > 0 {
@@ -688,17 +688,18 @@ pub enum Event {
 
     /// WebTransport Data was received
     ///
-    /// This indicates that the application can use the [`recv_webtransport_stream_data()`] method
-    /// to retrieve the data from the stream.
+    /// This indicates that the application can use the
+    /// [`recv_webtransport_stream_data()`] method to retrieve the data from
+    /// the stream.
     ///
-    /// Note that [`recv_webtransport_stream_data()`] will need to be called repeatedly until the
-    /// [`Done`] value is returned, as the event will not be re-armed until all
-    /// buffered data is read.
+    /// Note that [`recv_webtransport_stream_data()`] will need to be called
+    /// repeatedly until the [`Done`] value is returned, as the event will
+    /// not be re-armed until all buffered data is read.
     ///
     /// [`recv_webtransport_stream_data()`]: struct.Connection.html#method.recv_body
     /// [`Done`]: enum.Error.html#variant.Done
     WebTransportStreamData(u64),
-    
+
     /// Stream was closed,
     Finished,
 
@@ -1548,6 +1549,57 @@ impl Connection {
         Err(Error::Done)
     }
 
+    /// Reads WebTransport data into the provided buffer.
+    ///
+    /// Applications should call this method whenever the [`poll()`] method
+    /// returns a [`Data`] event.
+    ///
+    /// On success the amount of bytes read is returned, or [`Done`] if there
+    /// is no data to read.
+    ///
+    /// [`poll()`]: struct.Connection.html#method.poll
+    /// [`Data`]: enum.Event.html#variant.Data
+    /// [`Done`]: enum.Error.html#variant.Done
+    pub fn recv_webtransport_stream_data(
+        &mut self, conn: &mut super::Connection, stream_id: u64, out: &mut [u8],
+    ) -> Result<usize> {
+        let mut total = 0;
+
+        while total < out.len() {
+            let stream = self.streams.get_mut(&stream_id).ok_or(Error::Done)?;
+
+            if stream.state() != stream::State::WebTransportStreamData {
+                break;
+            }
+
+            let (read, fin) = match stream
+                .try_consume_webtransport_data(conn, &mut out[total..])
+            {
+                Ok(v) => v,
+
+                Err(Error::Done) => break,
+
+                Err(e) => return Err(e),
+            };
+
+            total += read;
+
+            if read == 0 || fin {
+                break;
+            }
+        }
+
+        if conn.stream_finished(stream_id) {
+            self.process_finished_stream(stream_id);
+        }
+
+        if total == 0 {
+            return Err(Error::Done);
+        }
+
+        Ok(total)
+    }
+
     /// Processes HTTP/3 data received from the peer.
     ///
     /// On success it returns an [`Event`] and an ID, or [`Done`] when there are
@@ -1994,7 +2046,9 @@ impl Connection {
                 .local_settings
                 .connect_protocol_enabled,
             h3_datagram: self.local_settings.h3_datagram,
-            webtransport_max_sessions: self.local_settings.webtransport_max_sessions,
+            webtransport_max_sessions: self
+                .local_settings
+                .webtransport_max_sessions,
             grease,
             raw: Default::default(),
         };
@@ -2379,9 +2433,11 @@ impl Connection {
                     }
 
                     if let Some(session_id) = stream.webtransport_session_id() {
-                        return Ok((stream_id, Event::WebTransportStreamData(session_id)));
+                        return Ok((
+                            stream_id,
+                            Event::WebTransportStreamData(session_id),
+                        ));
                     }
-
                 },
 
                 stream::State::Finished => break,
@@ -2403,7 +2459,9 @@ impl Connection {
         }
 
         match stream.ty() {
-            Some(stream::Type::Request) | Some(stream::Type::Push) => {
+            Some(stream::Type::Request) |
+            Some(stream::Type::Push) |
+            Some(stream::Type::WebTransport) => {
                 stream.finished();
 
                 self.finished_streams.push_back(stream_id);

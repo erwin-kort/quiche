@@ -170,7 +170,8 @@ pub struct Stream {
     /// The WebTransport session id currently being parsed.
     webtransport_session_id: Option<u64>,
 
-    /// Whether a `WebTransportStreamData` event has been triggered for this stream.
+    /// Whether a `WebTransportStreamData` event has been triggered for this
+    /// stream.
     webtransport_data_event_triggered: bool,
 }
 
@@ -327,12 +328,12 @@ impl Stream {
                         (frame::WEBTRANSPORT_STREAM_FRAME_TYPE_ID, true) => {
                             self.local_initialized = true;
                             next_state = State::WebTransportSessionId;
-                        }
+                        },
 
                         (frame::WEBTRANSPORT_STREAM_FRAME_TYPE_ID, false) => {
                             self.remote_initialized = true;
                             next_state = State::WebTransportSessionId;
-                        }
+                        },
 
                         (frame::CANCEL_PUSH_FRAME_TYPE_ID, _) =>
                             return Err(Error::FrameUnexpected),
@@ -417,9 +418,7 @@ impl Stream {
     pub fn set_webtransport_session_id(&mut self, session_id: u64) -> Result<()> {
         assert_eq!(self.state, State::WebTransportSessionId);
 
-        if self.ty == Some(Type::Request) ||
-            self.ty == Some(Type::WebTransport)
-        {
+        if self.ty == Some(Type::Request) || self.ty == Some(Type::WebTransport) {
             self.webtransport_session_id = Some(session_id);
             self.state_transition(State::WebTransportStreamData, 0, false)?;
             return Ok(());
@@ -611,6 +610,35 @@ impl Stream {
 
         if self.state_buffer_complete() {
             self.state_transition(State::FrameType, 1, true)?;
+        }
+
+        Ok((len, fin))
+    }
+
+    pub fn try_consume_webtransport_data(
+        &mut self, conn: &mut crate::Connection, out: &mut [u8],
+    ) -> Result<(usize, bool)> {
+        let udp_mtu = 1350;
+        let left = std::cmp::min(out.len(), udp_mtu);
+
+        let (len, fin) = match conn.stream_recv(self.id, &mut out[..left]) {
+            Ok(v) => v,
+
+            Err(e) => {
+                // The stream is not readable anymore, so re-arm the
+                // WebTransportStreamData event.
+                if e == crate::Error::Done {
+                    self.reset_webtransport_data_event();
+                }
+
+                return Err(e.into());
+            },
+        };
+
+        // The stream is not readable anymore, so re-arm the
+        // WebTransportStreamData event.
+        if !conn.stream_readable(self.id) {
+            self.reset_webtransport_data_event();
         }
 
         Ok((len, fin))
