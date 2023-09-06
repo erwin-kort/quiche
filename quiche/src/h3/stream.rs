@@ -83,8 +83,8 @@ pub enum State {
     /// Reading the WebTransport sessionId.
     WebTransportSessionId,
 
-    /// Reading the WebTransport data.
-    WebTransportStreamData,
+    /// Reading WebTransport DATA payload.
+    WebTransportData(u64),
 
     /// Reading the push ID.
     PushId,
@@ -169,10 +169,6 @@ pub struct Stream {
 
     /// The WebTransport session id currently being parsed.
     webtransport_session_id: Option<u64>,
-
-    /// Whether a `WebTransportStreamData` event has been triggered for this
-    /// stream.
-    webtransport_data_event_triggered: bool,
 }
 
 impl Stream {
@@ -215,8 +211,6 @@ impl Stream {
             last_priority_update: None,
 
             webtransport_session_id: None,
-
-            webtransport_data_event_triggered: false,
         }
     }
 
@@ -415,12 +409,22 @@ impl Stream {
         self.frame_type
     }
 
+    /// Sets the streams WebTransport session id and transitions to the next
+    /// state.
     pub fn set_webtransport_session_id(&mut self, session_id: u64) -> Result<()> {
-        assert_eq!(self.state, State::WebTransportSessionId);
+        // only assert the streams state if this stream is not the WebTransport
+        // CONNECT Request
+        if session_id != self.id {
+            assert_eq!(self.state, State::WebTransportSessionId);
+        }
 
         if self.ty == Some(Type::Request) || self.ty == Some(Type::WebTransport) {
             self.webtransport_session_id = Some(session_id);
-            self.state_transition(State::WebTransportStreamData, 0, false)?;
+            self.state_transition(
+                State::WebTransportData(session_id),
+                1350,
+                false,
+            )?;
             return Ok(());
         }
         Err(Error::InternalError)
@@ -615,35 +619,6 @@ impl Stream {
         Ok((len, fin))
     }
 
-    pub fn try_consume_webtransport_data(
-        &mut self, conn: &mut crate::Connection, out: &mut [u8],
-    ) -> Result<(usize, bool)> {
-        let udp_mtu = 1350;
-        let left = std::cmp::min(out.len(), udp_mtu);
-
-        let (len, fin) = match conn.stream_recv(self.id, &mut out[..left]) {
-            Ok(v) => v,
-
-            Err(e) => {
-                // The stream is not readable anymore, so re-arm the
-                // WebTransportStreamData event.
-                if e == crate::Error::Done {
-                    self.reset_webtransport_data_event();
-                }
-
-                return Err(e.into());
-            },
-        };
-
-        // The stream is not readable anymore, so re-arm the
-        // WebTransportStreamData event.
-        if !conn.stream_readable(self.id) {
-            self.reset_webtransport_data_event();
-        }
-
-        Ok((len, fin))
-    }
-
     /// Marks the stream as finished.
     pub fn finished(&mut self) {
         let _ = self.state_transition(State::Finished, 0, false);
@@ -702,21 +677,6 @@ impl Stream {
     /// Returns `true` if there is a priority update.
     pub fn has_last_priority_update(&self) -> bool {
         self.last_priority_update.is_some()
-    }
-
-    pub fn try_trigger_webtransport_data_event(&mut self) -> bool {
-        if self.webtransport_data_event_triggered {
-            return false;
-        }
-
-        self.webtransport_data_event_triggered = true;
-
-        true
-    }
-
-    /// Resets the data triggered state.
-    fn reset_webtransport_data_event(&mut self) {
-        self.webtransport_data_event_triggered = false;
     }
 
     /// Returns true if the state buffer has enough data to complete the state.

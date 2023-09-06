@@ -604,7 +604,9 @@ fn parse_settings_frame(
                 connect_protocol_enabled = Some(value);
             },
 
-            SETTINGS_H3_DATAGRAM | SETTINGS_H3_DATAGRAM_04 | SETTINGS_H3_DATAGRAM_08 => {
+            SETTINGS_H3_DATAGRAM |
+            SETTINGS_H3_DATAGRAM_04 |
+            SETTINGS_H3_DATAGRAM_08 => {
                 if value > 1 {
                     return Err(super::Error::SettingsError);
                 }
@@ -612,9 +614,10 @@ fn parse_settings_frame(
                 h3_datagram = Some(value);
             },
 
-            SETTINGS_ENABLE_WEBTRANSPORT_02 | SETTINGS_WEBTRANSPORT_MAX_SESSIONS => {
+            SETTINGS_ENABLE_WEBTRANSPORT_02 |
+            SETTINGS_WEBTRANSPORT_MAX_SESSIONS => {
                 webtransport_max_sessions = Some(value);
-            }
+            },
 
             // Reserved values overlap with HTTP/2 and MUST be rejected
             0x0 | 0x2 | 0x3 | 0x4 | 0x5 =>
@@ -987,8 +990,7 @@ mod tests {
     fn settings_h3_dgram_only() {
         let mut d = [42; 128];
 
-        let raw_settings =
-            vec![(SETTINGS_H3_DATAGRAM, 1)];
+        let raw_settings = vec![(SETTINGS_H3_DATAGRAM, 1)];
 
         let frame = Frame::Settings {
             max_field_section_size: None,
